@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tower Defense VIP - Stable</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#07111b;color:#fff;font-family:Arial,sans-serif;overflow:hidden}
+#wrap{width:100vw;height:100vh;display:flex;align-items:center;justify-content:center;background:radial-gradient(circle at 50% 30%,#17324a,#050a10 75%)}
+#game{position:relative;width:min(1100px,100vw);height:min(700px,100vh);background:#0b1720;border:2px solid #2d5065;border-radius:18px;overflow:hidden;box-shadow:0 0 50px #000}
+canvas{display:block;width:100%;height:100%}
+#start{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,rgba(3,10,18,.96),rgba(10,30,42,.96));z-index:5}
+.card{width:min(520px,90%);padding:38px;text-align:center;border:1px solid #4b8198;border-radius:24px;background:rgba(12,28,39,.96);box-shadow:0 20px 80px #000}
+h1{margin:0 0 8px;font-size:42px;letter-spacing:2px;color:#8de7ff;text-shadow:0 0 20px #1ec8ff}
+.sub{color:#9fb9c6;margin-bottom:28px}.btn{border:0;border-radius:14px;padding:15px 28px;font-weight:800;font-size:18px;color:#061018;background:linear-gradient(135deg,#65e6ff,#a8ffcf);cursor:pointer;box-shadow:0 0 25px #39dfff88}.btn:hover{transform:scale(1.04)}
+.hint{font-size:13px;color:#7893a0;margin-top:18px;line-height:1.6}
+#hud{position:absolute;left:12px;right:12px;top:10px;display:none;z-index:3;gap:8px;pointer-events:none;flex-wrap:wrap}
+.stat{background:rgba(5,14,22,.86);border:1px solid #315267;border-radius:10px;padding:7px 11px;font-size:14px;box-shadow:0 4px 15px #0006}
+#buttons{position:absolute;right:12px;bottom:12px;display:none;z-index:4;gap:7px;flex-wrap:wrap;justify-content:flex-end}
+.skill{pointer-events:auto;border:1px solid #4d7c91;background:#102a39;color:white;border-radius:10px;padding:9px 11px;cursor:pointer;font-weight:700}.skill.ready{box-shadow:0 0 14px #5ee7ff88}.skill:disabled{opacity:.35;cursor:not-allowed}
+#towerbar{position:absolute;left:12px;bottom:12px;display:none;z-index:4;gap:7px}.tower{pointer-events:auto;border:1px solid #4d7c91;background:#102a39;color:#fff;border-radius:10px;padding:9px 11px;cursor:pointer}.tower.sel{outline:2px solid #7ff3ff}
+#msg{position:absolute;top:70px;left:50%;transform:translateX(-50%);z-index:6;display:none;background:#07131ddd;border:1px solid #5b91a7;padding:9px 16px;border-radius:12px}
+</style>
+</head>
+<body>
+<div id="wrap"><div id="game">
+<canvas id="c" width="1100" height="700"></canvas>
+<div id="start"><div class="card">
+<h1>TOWER DEFENSE VIP</h1><div class="sub">Bản ổn định • Offline • Không cần mạng</div>
+<button class="btn" id="startBtn">▶ START GAME</button>
+<div class="hint">Chọn tháp → click vào bãi cỏ để đặt.<br>Click tháp để nâng cấp. Dùng phím 1–4 cho skill.</div>
+</div></div>
+<div id="hud">
+<div class="stat">💰 <b id="money">0</b></div><div class="stat">❤️ <b id="lives">0</b></div>
+<div class="stat">🌊 Wave <b id="wave">0</b></div><div class="stat">☠️ <b id="kills">0</b></div><div class="stat">🔥 Combo <b id="combo">x1</b></div>
+</div>
+<div id="towerbar">
+<button class="tower" data-t="archer">🏹 55</button><button class="tower" data-t="warrior" title="Triệu hồi lính chiến binh">⚔️ 75</button><button class="tower" data-t="cannon">💣 90</button><button class="tower" data-t="mage">🔮 120</button><button class="tower" data-t="sniper">🎯 160</button>
+</div>
+<div id="buttons">
+<button class="skill" id="s1">☄️ METEOR [1]</button><button class="skill" id="s2">❄️ FROST [2]</button>
+<button class="skill" id="s3">⚡ STORM [3]</button><button class="skill" id="s4">☢️ NUKE [4]</button>
+</div><div id="msg"></div>
+</div></div>
+<script>
+(()=> {
+const cv=document.getElementById('c'),x=cv.getContext('2d'), W=cv.width,H=cv.height;
+const start=document.getElementById('start'), startBtn=document.getElementById('startBtn');
+const hud=document.getElementById('hud'),towerbar=document.getElementById('towerbar'),buttons=document.getElementById('buttons');
+const moneyEl=document.getElementById('money'),livesEl=document.getElementById('lives'),waveEl=document.getElementById('wave'),killsEl=document.getElementById('kills'),comboEl=document.getElementById('combo');
+let running=false,last=0,money=260,lives=25,wave=0,kills=0,combo=1,selected='archer',selectedTower=null;
+let enemies=[],towers=[],soldiers=[],shots=[],parts=[],effects=[],spawnLeft=0,spawnTimer=0,waveGap=1,shake=0,aimSkill=null,mouseX=550,mouseY=350;
+const path=[{x:-30,y:170},{x:180,y:170},{x:180,y:390},{x:430,y:390},{x:430,y:180},{x:730,y:180},{x:730,y:510},{x:1130,y:510}];
+const costs={archer:55,warrior:75,cannon:90,mage:120,sniper:160};
+const stats={archer:{range:135,rate:.62,dmg:18},warrior:{range:72,rate:5,dmg:27},cannon:{range:120,rate:1.25,dmg:48},mage:{range:150,rate:.85,dmg:30},sniper:{range:260,rate:1.7,dmg:85}};
+const skills={s1:15,s2:19,s3:23,s4:32},cd={s1:0,s2:0,s3:0,s4:0};
+
+function msg(t){let e=document.getElementById('msg');e.textContent=t;e.style.display='block';clearTimeout(msg.t);msg.t=setTimeout(()=>e.style.display='none',1400)}
+function ui(){moneyEl.textContent=Math.floor(money);livesEl.textContent=lives;waveEl.textContent=wave;killsEl.textContent=kills;comboEl.textContent='x'+combo.toFixed(1)}
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y)}
+function posOnPath(p){
+ let remain=p, seg;
+ for(let i=0;i<path.length-1;i++){let a=path[i],b=path[i+1],d=dist(a,b);if(remain<=d){let q=remain/d;return{x:a.x+(b.x-a.x)*q,y:a.y+(b.y-a.y)*q,seg:i}}remain-=d}
+ return{x:path.at(-1).x,y:path.at(-1).y,seg:path.length-2}
+}
+function spawn(){
+ let r=Math.random(),type=r<.60?'normal':r<.78?'fast':r<.91?'tank':r<.98?'elite':'boss';
+ if(wave%6===0 && spawnLeft===1) type='boss';
+ let hp=(55+wave*14)*(type==='fast'?.65:type==='tank'?3.5:type==='elite'?5:type==='boss'?22:1);
+ enemies.push({type,hp,max:hp,p:0,speed:(type==='fast'?105:type==='tank'?42:type==='elite'?58:type==='boss'?30:70)+wave*1.2,slow:0,burn:0,poison:0,dead:false});
+}
+function startWave(){wave++;spawnLeft=wave%6===0?7+Math.floor(wave/2):10+wave*2;spawnTimer=0;msg('WAVE '+wave);ui()}
+function damage(e,d,kind='normal'){
+ if(e.dead)return;e.hp-=d;if(kind==='fire')e.burn=Math.max(e.burn,3);if(kind==='poison')e.poison=Math.max(e.poison,5);
+ if(e.hp<=0){e.dead=true;kills++;money+=e.type==='boss'?220:e.type==='elite'?80:e.type==='tank'?35:18;combo=Math.min(8,combo+.12);parts.push({x:e.x,y:e.y,n:18,life:.5,kind:'boom'});shake=8}
+}
+function towerShoot(t,e){
+ let s=stats[t.type],d=s.dmg*(1+t.level*.25)*(Math.random()<.1?2:1);
+ if(t.type==='warrior'){
+   // Chiến binh là tháp triệu hồi, không tự bắn.
+   if(t.summonCd<=0 && soldiers.filter(v=>v.owner===t).length < 2 + Math.min(3,Math.floor(t.level/2))){
+     soldiers.push({
+       owner:t,x:t.x,y:t.y-28,hp:130+t.level*35,maxHp:130+t.level*35,
+       dmg:20+t.level*8,range:46,speed:55,attackCd:0,
+       lastHit:0,regenDelay:5,regen:12,life:0
+     });
+     t.summonCd=5;
+     effects.push({x:t.x,y:t.y-28,r:28,life:.4,type:'summon'});
+   }
+   t.cd=.25;
+   return;
+ }
+ let kind=t.type==='mage'?'ice':t.type==='archer'?'poison':'normal';
+ shots.push({x:t.x,y:t.y,target:e,d,kind,speed:t.type==='sniper'?800:420});
+ t.cd=s.rate/(1+t.level*.10);
+}
+function cast(id,tx=null,ty=null){
+ if(cd[id]>0)return;
+ if(tx===null){
+   aimSkill=id;
+   msg('🎯 Chọn vùng kỹ năng trên bản đồ');
+   return;
+ }
+ cd[id]=skills[id]; aimSkill=null;
+ let radius=150;
+ if(id==='s1'){
+   enemies.forEach(e=>{if(!e.dead&&Math.hypot(e.x-tx,e.y-ty)<radius)damage(e,220+wave*20,'fire')});
+   effects.push({x:tx,y:ty,r:radius,life:.7,type:'meteor'}); shake=14;
+ }
+ if(id==='s2'){
+   enemies.forEach(e=>{if(!e.dead&&Math.hypot(e.x-tx,e.y-ty)<radius)e.slow=Math.max(e.slow,5)});
+   effects.push({x:tx,y:ty,r:radius,life:.9,type:'frost'});
+ }
+ if(id==='s3'){
+   enemies.forEach(e=>{if(!e.dead&&Math.hypot(e.x-tx,e.y-ty)<radius)damage(e,180+wave*14,'normal')});
+   effects.push({x:tx,y:ty,r:radius,life:.7,type:'storm'}); shake=12;
+ }
+ if(id==='s4'){
+   radius=210;
+   enemies.forEach(e=>{if(!e.dead&&Math.hypot(e.x-tx,e.y-ty)<radius)damage(e,400+wave*38,'fire')});
+   effects.push({x:tx,y:ty,r:radius,life:1.1,type:'nuke'}); shake=22;
+ }
+ ui();
+}
+function update(dt){
+ if(!running)return;
+ for(let k in cd)cd[k]=Math.max(0,cd[k]-dt);
+ if(wave===0)startWave();
+ if(spawnLeft>0){spawnTimer-=dt;if(spawnTimer<=0){spawn();spawnLeft--;spawnTimer=.42}else{}}
+ else if(enemies.length===0){waveGap-=dt;if(waveGap<=0){waveGap=1;startWave()}}
+ enemies.forEach(e=>{
+  if(e.dead)return;
+  if(e.burn>0){e.burn-=dt;e.hp-=10*dt}
+  if(e.poison>0){e.poison-=dt;e.hp-=7*dt}
+  if(e.hp<=0){damage(e,0);return}
+  e.slow=Math.max(0,e.slow-dt);
+  let q=posOnPath(e.p);e.x=q.x;e.y=q.y;e.p+=(e.speed*(e.slow>0?.45:1))*dt;
+  if(e.p>totalPath){e.dead=true;lives-=e.type==='boss'?5:1;combo=1;shake=12}
+ });
+ // Cập nhật lính triệu hồi
+ soldiers.forEach(sold=>{
+   sold.life+=dt;
+   if(sold.owner) sold.owner.summonCd=Math.max(0,(sold.owner.summonCd||0)-dt);
+   let target=null,bd=1e9;
+   enemies.forEach(e=>{if(e.dead)return;let d=dist(sold,e);if(d<bd){bd=d;target=e}});
+   if(target && bd<=sold.range){
+     sold.attackCd-=dt;
+     if(sold.attackCd<=0){
+       damage(target,sold.dmg,'normal');
+       sold.attackCd=.7;
+       sold.lastHit=0;
+       effects.push({x:sold.x,y:sold.y,r:20,life:.12,type:'slash'});
+     }
+   } else if(target){
+     let dx=target.x-sold.x,dy=target.y-sold.y,d=Math.hypot(dx,dy)||1;
+     sold.x+=dx/d*sold.speed*dt;sold.y+=dy/d*sold.speed*dt;
+   }
+   // Nếu 5 giây không bị đánh -> hồi máu
+   sold.lastHit+=dt;
+   if(sold.lastHit>=sold.regenDelay && sold.hp<sold.maxHp){
+     sold.hp=Math.min(sold.maxHp,sold.hp+sold.regen*dt);
+   }
+ });
+ soldiers=soldiers.filter(s=>s.hp>0 && s.life<90);
+
+ towers.forEach(t=>{
+  t.cd-=dt;
+  if(t.type==='warrior'){
+    t.summonCd=(t.summonCd||0)-dt;
+    if(t.summonCd<=0){
+      towerShoot(t,null);
+    }
+    return;
+  }
+  if(t.cd>0)return;
+  let s=stats[t.type],best=null,bd=1e9;
+  if(t.type==='warrior'){ towerShoot(t,null); return; }
+  enemies.forEach(e=>{if(e.dead)return;let d=dist(t,e);if(d<s.range && e.p<bd){bd=e.p;best=e}});
+  if(best)towerShoot(t,best);
+ });
+ shots.forEach(s=>{if(!s.target||s.target.dead){s.dead=true;return}let dx=s.target.x-s.x,dy=s.target.y-s.y,d=Math.hypot(dx,dy),step=s.speed*dt;if(d<step){s.x=s.target.x;s.y=s.target.y;damage(s.target,s.d,s.kind==='poison'?'poison':s.kind==='ice'?'normal':'normal');s.dead=true;parts.push({x:s.x,y:s.y,n:5,life:.25,kind:'hit'})}else{s.x+=dx/d*step;s.y+=dy/d*step}});
+ shots=shots.filter(s=>!s.dead);enemies=enemies.filter(e=>!e.dead);
+ parts.forEach(p=>p.life-=dt);parts=parts.filter(p=>p.life>0);effects.forEach(e=>e.life-=dt);effects=effects.filter(e=>e.life>0);
+ shake*=.9;if(lives<=0){running=false;msg('GAME OVER — bấm START để chơi lại');start.style.display='flex';startBtn.textContent='↻ CHƠI LẠI';hud.style.display=towerbar.style.display=buttons.style.display='none'}
+ ui();for(let i=1;i<=4;i++){let b=document.getElementById('s'+i);b.disabled=cd['s'+i]>0;b.textContent=['☄️ METEOR [1]','❄️ FROST [2]','⚡ STORM [3]','☢️ NUKE [4]'][i-1]+(cd['s'+i]>0?' '+cd['s'+i].toFixed(0)+'s':'')}
+}
+let totalPath=0;for(let i=0;i<path.length-1;i++)totalPath+=dist(path[i],path[i+1]);
+function draw(){
+ x.save();x.clearRect(0,0,W,H);x.translate((Math.random()-.5)*shake,(Math.random()-.5)*shake);
+ x.fillStyle='#173b27';x.fillRect(0,0,W,H);
+ // grass
+ x.globalAlpha=.18;x.strokeStyle='#9ddc8b';for(let i=0;i<900;i+=24){let xx=(i*73)%W,yy=(i*131)%H;x.beginPath();x.moveTo(xx,yy);x.lineTo(xx+4,yy-8);x.stroke()}x.globalAlpha=1;
+ // path
+ x.lineWidth=58;x.lineCap='round';x.strokeStyle='#18222a';x.beginPath();x.moveTo(path[0].x,path[0].y);path.slice(1).forEach(p=>x.lineTo(p.x,p.y));x.stroke();
+ x.lineWidth=48;x.strokeStyle='#8b704f';x.beginPath();x.moveTo(path[0].x,path[0].y);path.slice(1).forEach(p=>x.lineTo(p.x,p.y));x.stroke();
+ x.lineWidth=3;x.strokeStyle='#c49d6b';x.setLineDash([12,14]);x.beginPath();x.moveTo(path[0].x,path[0].y);path.slice(1).forEach(p=>x.lineTo(p.x,p.y));x.stroke();x.setLineDash([]);
+ // trees
+ for(let i=0;i<18;i++){let xx=40+(i*137)%1000,yy=60+(i*83)%560;if(Math.abs(yy-170)<50||Math.abs(yy-390)<50||Math.abs(yy-180)<50||Math.abs(yy-510)<50)continue;x.fillStyle='#553d2c';x.fillRect(xx-4,yy,8,22);x.fillStyle='#1d6b3b';x.beginPath();x.arc(xx,yy,20,0,7);x.fill();x.fillStyle='#2c8a4b';x.beginPath();x.arc(xx-8,yy-8,12,0,7);x.fill()}
+ // towers
+ towers.forEach(t=>{let s=stats[t.type];x.beginPath();x.arc(t.x,t.y,s.range,0,7);x.fillStyle='rgba(80,210,255,.045)';x.fill();x.strokeStyle='rgba(120,230,255,.12)';x.stroke();
+ x.fillStyle='#102b38';x.beginPath();x.arc(t.x,t.y,22,0,7);x.fill();x.strokeStyle=t===selectedTower?'#fff':'#72d9ef';x.lineWidth=3;x.stroke();
+ x.fillStyle='#fff';x.font='18px Arial';x.textAlign='center';x.fillText(t.type==='archer'?'🏹':t.type==='warrior'?'⚔️':t.type==='cannon'?'💣':t.type==='mage'?'🔮':'🎯',t.x,t.y+6);x.font='11px Arial';x.fillText('Lv'+t.level,t.x,t.y+37)});
+ // lính chiến binh triệu hồi
+ soldiers.forEach(sold=>{
+   x.fillStyle='#d9b27a';x.beginPath();x.arc(sold.x,sold.y,11,0,7);x.fill();
+   x.fillStyle='#536b82';x.fillRect(sold.x-9,sold.y-7,18,14);
+   x.fillStyle='#d7e8f0';x.fillRect(sold.x-8,sold.y-16,16,9);
+   x.strokeStyle='#bfeeff';x.stroke();
+   let bw=30;x.fillStyle='#24151a';x.fillRect(sold.x-bw/2,sold.y-25,bw,4);
+   x.fillStyle='#5eea83';x.fillRect(sold.x-bw/2,sold.y-25,bw*Math.max(0,sold.hp/sold.maxHp),4);
+   if(sold.lastHit>=sold.regenDelay && sold.hp<sold.maxHp){
+     x.fillStyle='#8cff9b';x.font='12px Arial';x.textAlign='center';x.fillText('+HP',sold.x,sold.y-31);
+   }
+ });
+ // enemies
+ enemies.forEach(e=>{x.fillStyle=e.type==='boss'?'#9c1c3c':e.type==='elite'?'#8b43a8':e.type==='tank'?'#44515d':e.type==='fast'?'#d68a29':'#b94444';x.beginPath();x.arc(e.x,e.y,e.type==='boss'?23:e.type==='tank'?18:14,0,7);x.fill();x.strokeStyle='#f2c7a3';x.stroke();
+ let w=e.type==='boss'?55:34;x.fillStyle='#250f16';x.fillRect(e.x-w/2,e.y-30,w,5);x.fillStyle='#65ef8a';x.fillRect(e.x-w/2,e.y-30,w*Math.max(0,e.hp/e.max),5)});
+ // shots
+ shots.forEach(s=>{x.fillStyle=s.kind==='ice'?'#9ff4ff':s.kind==='poison'?'#b9ff71':'#ffd36b';x.beginPath();x.arc(s.x,s.y,4,0,7);x.fill()});
+ parts.forEach(p=>{for(let i=0;i<p.n;i++){let a=i/p.n*7,r=(1-p.life)*50+8;x.fillStyle=p.kind==='boom'?'#ff9d5c':'#d9faff';x.beginPath();x.arc(p.x+Math.cos(a)*r,p.y+Math.sin(a)*r,2,0,7);x.fill()}});
+ if(aimSkill){
+ let ar=aimSkill==='s4'?210:150;
+ x.beginPath();x.arc(mouseX,mouseY,ar,0,7);x.fillStyle='rgba(80,220,255,.08)';x.fill();
+ x.strokeStyle='#8ff6ff';x.lineWidth=2;x.setLineDash([8,8]);x.stroke();x.setLineDash([]);
+ x.fillStyle='#fff';x.font='14px Arial';x.textAlign='center';x.fillText('CLICK ĐỂ DÙNG SKILL',mouseX,mouseY-ar-10);
+}
+effects.forEach(e=>{x.beginPath();x.arc(e.x,e.y,e.r*(1-e.life+.2),0,7);x.strokeStyle=e.type==='frost'?'#9eeeff':'#ffd36b';x.lineWidth=5;x.globalAlpha=Math.min(1,e.life*2);x.stroke();x.globalAlpha=1});
+ x.restore();
+}
+function loop(t){let dt=Math.min(.033,(t-last)/1000||0);last=t;update(dt);draw();requestAnimationFrame(loop)}
+startBtn.onclick=()=>{money=260;lives=25;wave=0;kills=0;combo=1;enemies=[];towers=[];soldiers=[];shots=[];parts=[];effects=[];waveGap=1;for(let k in cd)cd[k]=0;running=true;start.style.display='none';hud.style.display='flex';towerbar.style.display='flex';buttons.style.display='flex';ui();msg('Sẵn sàng! Chọn tháp rồi đặt xuống map')};
+document.querySelectorAll('.tower').forEach(b=>b.onclick=()=>{selected=b.dataset.t;document.querySelectorAll('.tower').forEach(z=>z.classList.remove('sel'));b.classList.add('sel')});
+cv.onmousemove=e=>{let r=cv.getBoundingClientRect();mouseX=(e.clientX-r.left)*W/r.width;mouseY=(e.clientY-r.top)*H/r.height;};
+cv.onclick=e=>{if(!running)return;let r=cv.getBoundingClientRect(),mx=(e.clientX-r.left)*W/r.width,my=(e.clientY-r.top)*H/r.height;
+ if(aimSkill){cast(aimSkill,mx,my);return}
+ let near=towers.find(t=>Math.hypot(t.x-mx,t.y-my)<28);if(near){selectedTower=near;msg('Tháp Lv'+near.level+' — click lần nữa để nâng cấp');return}
+ if(selectedTower){if(money>=90){money-=90;selectedTower.level++;msg('Nâng cấp thành công!')}else msg('Không đủ tiền');return}
+ if(money<costs[selected]){msg('Không đủ tiền');return}
+ if(Math.min(...path.map(p=>Math.hypot(p.x-mx,p.y-my)))<55){msg('Không đặt trên đường!');return}
+ if(towers.some(t=>Math.hypot(t.x-mx,t.y-my)<55)){msg('Chỗ này đã có tháp');return}
+ money-=costs[selected];towers.push({x:mx,y:my,type:selected,level:1,cd:0});selectedTower=null;msg('Đã đặt tháp!');ui()
+};
+['s1','s2','s3','s4'].forEach((id,i)=>document.getElementById(id).onclick=()=>cast(id));
+addEventListener('keydown',e=>{if(['1','2','3','4'].includes(e.key))cast('s'+e.key)});
+requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
